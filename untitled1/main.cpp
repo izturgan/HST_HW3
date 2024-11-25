@@ -1,108 +1,43 @@
 #include <mpi.h>
-#include <iostream>
 #include <vector>
-#include <fstream>
-#include <numeric>
-#include <chrono>
-
+#include <iostream>
 using namespace std;
-using namespace chrono;
 
-// Функция для вычисления среднего по строке
-double calculateRowAverage(const vector<int>& row) {
-    double sum = accumulate(row.begin(), row.end(), 0.0);
-    return sum / row.size();
-}
-
-int main(int argc, char* argv[]) {
-    MPI_Init(&argc, &argv);
+int main(int argc, char** argv) {
+    MPI_Init(&argc, &argv); // Инициализация MPI
 
     int rank, size;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank); // Определяем ранг процесса
+    MPI_Comm_size(MPI_COMM_WORLD, &size); // Определяем общее количество процессов
 
-    vector<vector<int>> matrix;
-    int rows, cols;
+    // Размер матрицы (например, N = 8)
+    int N = 8;
+    vector<double> global_result; // Итоговый массив для данных от всех процессов
+    vector<double> local_result(N / size); // Массив для данных локального процесса
+
+    // Генерация данных локально (здесь пример с фиктивными данными)
+    for (int i = 0; i < N / size; ++i) {
+        local_result[i] = rank + i; // Пример: ранг + индекс
+    }
 
     if (rank == 0) {
-        // Главный процесс читает данные
-        ifstream inputFile("matrix_input.txt");
-        if (!inputFile.is_open()) {
-            cerr << "Ошибка: не удалось открыть файл для чтения данных." << endl;
-            MPI_Abort(MPI_COMM_WORLD, 1);
-        }
-
-        inputFile >> rows >> cols;
-        matrix.resize(rows, vector<int>(cols));
-        for (int i = 0; i < rows; ++i) {
-            for (int j = 0; j < cols; ++j) {
-                inputFile >> matrix[i][j];
-            }
-        }
-        inputFile.close();
+        // Процесс 0 должен иметь массив для хранения всех данных
+        global_result.resize(N);
     }
 
-    // Передача размера матрицы
-    MPI_Bcast(&rows, 1, MPI_INT, 0, MPI_COMM_WORLD);
-    MPI_Bcast(&cols, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    // Сбор данных от всех процессов
+    MPI_Gather(local_result.data(), local_result.size(), MPI_DOUBLE,
+               global_result.data(), local_result.size(), MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
-    // Делим матрицу между процессами
-    int rowsPerProcess = rows / size;
-    int extraRows = rows % size;
-    int startRow = rank * rowsPerProcess + min(rank, extraRows);
-    int endRow = startRow + rowsPerProcess + (rank < extraRows ? 1 : 0);
-
-    vector<vector<int>> localMatrix(endRow - startRow, vector<int>(cols));
+    // Печать результатов на процессе 0
     if (rank == 0) {
-        for (int i = 0; i < size; ++i) {
-            int start = i * rowsPerProcess + min(i, extraRows);
-            int end = start + rowsPerProcess + (i < extraRows ? 1 : 0);
-            if (i == 0) {
-                localMatrix = vector<vector<int>>(matrix.begin() + start, matrix.begin() + end);
-            } else {
-                MPI_Send(matrix[start].data(), (end - start) * cols, MPI_INT, i, 0, MPI_COMM_WORLD);
-            }
+        cout << "Собранные данные:" << endl;
+        for (double val : global_result) {
+            cout << val << " ";
         }
-    } else {
-        MPI_Recv(localMatrix[0].data(), localMatrix.size() * cols, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        cout << endl;
     }
 
-    // Вычисление среднего для каждой строки
-    auto start = high_resolution_clock::now();
-
-    vector<double> localAverages(localMatrix.size());
-    for (int i = 0; i < localMatrix.size(); ++i) {
-        localAverages[i] = calculateRowAverage(localMatrix[i]);
-    }
-
-    auto end = high_resolution_clock::now();
-    duration<double> elapsed = end - start;
-
-    // Сбор данных
-    vector<double> averages;
-    if (rank == 0) {
-        averages.resize(rows);
-    }
-
-    MPI_Gather(localAverages.data(), localAverages.size(), MPI_DOUBLE,
-               averages.data(), localAverages.size(), MPI_DOUBLE, 0, MPI_COMM_WORLD);
-
-    if (rank == 0) {
-        ofstream outFile("averages.txt");
-        if (outFile.is_open()) {
-            for (double avg : averages) {
-                outFile << avg << endl;
-            }
-            outFile << "\n--- Информация о вычислениях ---" << endl;
-            outFile << "Размер матрицы: " << rows << "x" << cols << endl;
-            outFile << "Время выполнения: " << elapsed.count() << " секунд" << endl;
-
-            outFile.close();
-        } else {
-            cerr << "Ошибка записи в файл." << endl;
-        }
-    }
-
-    MPI_Finalize();
+    MPI_Finalize(); // Завершение MPI
     return 0;
 }
