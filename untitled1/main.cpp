@@ -1,43 +1,78 @@
 #include <mpi.h>
 #include <vector>
 #include <iostream>
+#include <fstream>
 using namespace std;
 
 int main(int argc, char** argv) {
-    MPI_Init(&argc, &argv); // Инициализация MPI
+    MPI_Init(&argc, &argv);
 
     int rank, size;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank); // Определяем ранг процесса
-    MPI_Comm_size(MPI_COMM_WORLD, &size); // Определяем общее количество процессов
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-    // Размер матрицы (например, N = 8)
-    int N = 8;
-    vector<double> global_result; // Итоговый массив для данных от всех процессов
-    vector<double> local_result(N / size); // Массив для данных локального процесса
-
-    // Генерация данных локально (здесь пример с фиктивными данными)
-    for (int i = 0; i < N / size; ++i) {
-        local_result[i] = rank + i; // Пример: ранг + индекс
+    if (argc < 2) {
+        if (rank == 0) {
+            cerr << "Ошибка: необходимо указать имя входного файла." << endl;
+        }
+        MPI_Abort(MPI_COMM_WORLD, 1);
     }
 
+    string inputFileName = argv[1]; // Имя входного файла передаётся как аргумент
+    int N = 0;
+    vector<double> global_data;
+    vector<double> global_result;
+    vector<double> local_result;
+
     if (rank == 0) {
-        // Процесс 0 должен иметь массив для хранения всех данных
+        ifstream inputFile(inputFileName);
+        if (!inputFile.is_open()) {
+            cerr << "Ошибка: не удалось открыть файл " << inputFileName << "." << endl;
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+
+        inputFile >> N;
+        global_data.resize(N);
+        for (int i = 0; i < N; ++i) {
+            inputFile >> global_data[i];
+        }
+        inputFile.close();
+
+        if (N % size != 0) {
+            cerr << "Ошибка: размер данных не делится на количество процессов." << endl;
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+
         global_result.resize(N);
     }
 
-    // Сбор данных от всех процессов
-    MPI_Gather(local_result.data(), local_result.size(), MPI_DOUBLE,
-               global_result.data(), local_result.size(), MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&N, 1, MPI_INT, 0);
 
-    // Печать результатов на процессе 0
-    if (rank == 0) {
-        cout << "Собранные данные:" << endl;
-        for (double val : global_result) {
-            cout << val << " ";
-        }
-        cout << endl;
+    local_result.resize(N / size);
+    MPI_Scatter(global_data.data(), N / size, MPI_DOUBLE,
+                local_result.data(), N / size, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
+    for (double& val : local_result) {
+        val += rank;
     }
 
-    MPI_Finalize(); // Завершение MPI
+    MPI_Gather(local_result.data(), N / size, MPI_DOUBLE,
+               global_result.data(), N / size, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
+    if (rank == 0) {
+        ofstream outputFile("result.txt");
+        if (!outputFile.is_open()) {
+            cerr << "Ошибка: не удалось открыть файл result.txt для записи." << endl;
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+
+        for (double val : global_result) {
+            outputFile << val << " ";
+        }
+        outputFile << endl;
+        outputFile.close();
+    }
+
+    MPI_Finalize();
     return 0;
 }
